@@ -197,6 +197,9 @@ class Docker:
     def _tweak_settings(self):
         """Tweak settings."""
 
+        if options.options.quick:
+        	return
+
         options.log.info("tweaking settings")
 
         self.execute("sed -i -e \"/^#en_US.UTF-8/s/^#//\" /etc/locale.gen && locale-gen")
@@ -340,6 +343,9 @@ class Docker:
 
     def _install_basics(self):
         """Install some basic packages."""
+
+        if options.options.quick:
+        	return
 
         options.log.info("installing basic packages: %s" %
                          options.base_packages)

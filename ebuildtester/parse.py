@@ -109,6 +109,10 @@ def parse_commandline(args):
         default=[],
         nargs="+",
         action="append")
+    parser.add_argument(
+        "--quick",
+        help="Skip tweaking permanently",
+        action="store_true")
 
     options = parser.parse_args(args)
 
