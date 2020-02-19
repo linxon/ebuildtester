@@ -1,11 +1,11 @@
+import sys
+import os.path
+import logging
+
 from ebuildtester.atom import Atom
 from ebuildtester.docker import Docker, ExecuteFailure
 from ebuildtester.parse import parse_commandline
 import ebuildtester.options as options
-import logging
-import os.path
-import sys
-
 
 def main():
     """The main function."""
@@ -37,12 +37,12 @@ def main():
     if options.options.ccache_dir is not None:
         options.base_packages.extend(list(map(Atom, ["dev-util/ccache"])))
 
-    options.log.info("creating container")
+    options.log.info("creating container ...")
     container = Docker(
         os.path.abspath(os.path.expanduser(options.options.portage_dir)),
         [os.path.abspath(p) for p in options.options.overlay_dir])
 
-    options.log.info("created container " + container.cid)
+    options.log.info("container: " + container.cid[:12] + " — ready!\n")
     if options.options.manual:
         container.shell()
     else:

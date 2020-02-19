@@ -1,11 +1,11 @@
+import os, sys, re
+import subprocess
+
 import ebuildtester.options as options
 from ebuildtester.utils import massage_string
-import os
-
 
 class ExecuteFailure(Exception):
     pass
-
 
 class Docker:
 
@@ -38,10 +38,7 @@ class Docker:
         cmd is a string which is executed within a bash shell.
         """
 
-        import subprocess
-        import sys
-
-        options.log.info("%s %s" % (self.cid[:6], cmd))
+        options.log.info("%s" % (cmd))
         docker_cmd = ["docker", "exec", "--interactive"]
         docker_cmd += self._set_env(options.exec_env)
         docker_cmd += self._set_env(options.sh_env)
@@ -51,6 +48,7 @@ class Docker:
                                   stderr=subprocess.PIPE,
                                   stdin=subprocess.PIPE,
                                   universal_newlines=True)
+
         docker.stdin.write(cmd + "\n")
         docker.stdin.close()
 
@@ -74,6 +72,9 @@ class Docker:
             os.waitid(os.P_PID, stdout_reader, os.WEXITED)
             os.waitid(os.P_PID, stderr_reader, os.WEXITED)
             docker.wait()
+
+            if docker.returncode != 0:
+                raise ExecuteFailure
         except KeyboardInterrupt:
             try:
                 options.log.info("received keyboard interrupt")
@@ -85,21 +86,22 @@ class Docker:
             except OSError:
                 pass
             docker.wait()
-
-        if docker.returncode != 0:
-            options.log.error("running in container %s" % (str(self.cid)))
-            raise ExecuteFailure("failed command \"%s\"" % (cmd))
+        except ExecuteFailure:
+            options.log.error("failed command: \"%s\"" % (cmd))
+            docker.terminate()
+            self.shell()
+            self.cleanup()
+            sys.exit(1)
 
     def shell(self):
         """Run an interactive shell in container."""
 
-        import subprocess
-
-        options.log.info("running interactive shell in container")
+        options.log.info("running interactive shell in container ...")
         docker_cmd = ["docker", "exec", "--tty", "--interactive"]
         docker_cmd += self._set_env(options.sh_env)
         docker_cmd += [self.cid, "/bin/bash", "--login"]
         docker = subprocess.Popen(docker_cmd)
+
         try:
             docker.wait()
         except KeyboardInterrupt:
@@ -114,13 +116,11 @@ class Docker:
     def remove(self):
         """Remove the docker container."""
 
-        import subprocess
-
-        options.log.info("stopping container")
-        docker = subprocess.Popen(["docker", "kill", self.cid])
+        options.log.info("stopping container ...")
+        docker = subprocess.Popen(["docker", "kill", self.cid[:12]])
         docker.wait()
-        options.log.info("deleting container")
-        docker = subprocess.Popen(["docker", "rm", self.cid])
+        options.log.info("deleting container ...")
+        docker = subprocess.Popen(["docker", "rm", self.cid[:12]])
         docker.wait()
 
     def _reader(self, proc, stream, name):
@@ -131,22 +131,19 @@ class Docker:
             if out == "" and proc.poll() is not None:
                 break
             options.log.info("%s (%s): %s" %
-                             (self.cid[:6], name, out.rstrip()))
+                             (self.cid[:12], name, out.rstrip()))
             options.log_ch.flush()
 
     def _setup_container(self, docker_image):
         """Setup the container."""
 
         if options.options.pull:
-            import subprocess
             docker_args = ["docker", "pull", docker_image]
             docker = subprocess.Popen(docker_args)
             docker.wait()
 
     def _create_container(self, docker_image, local_portage, overlays):
         """Create new container."""
-
-        import subprocess
 
         docker_args = [
             "docker", "create",
@@ -157,13 +154,15 @@ class Docker:
             "--volume", "%s:/var/db/repos/gentoo" % local_portage,
             "--volume", "%s/distfiles:/var/cache/distfiles" % local_portage,
             "--volume", "%s/packages:/var/cache/binpkgs" % local_portage]
+
         for o in overlays:
             docker_args += ["--volume=%s:%s" % o]
+
         if options.options.ccache_dir is not None:
             docker_args += ["--volume=%s:/var/cache/ccache" % " ".join(options.options.ccache_dir)]
+
         docker_args += [docker_image]
-        options.log.info("creating docker container with: %s" %
-                         " ".join(docker_args))
+        options.log.info("cmdline: %s" % " ".join(docker_args))
         docker = subprocess.Popen(docker_args, stdout=subprocess.PIPE)
         docker.wait()
         if docker.returncode != 0:
@@ -173,12 +172,10 @@ class Docker:
         if len(lines) > 1:
             raise Exception("more output than expected")
         self.cid = massage_string(lines[0]).strip()
-        options.log.info("container id %s" % (self.cid))
+        options.log.info("prepare container: %s" % (self.cid[:12]))
 
     def _start_container(self):
         """Start the container."""
-
-        import subprocess
 
         docker_args = ["docker", "start", "%s" % self.cid]
         docker = subprocess.Popen(docker_args, stdout=subprocess.PIPE)
@@ -210,14 +207,15 @@ class Docker:
 
         # Disable the usersandbox feature, it's not working well inside a
         # docker container.
-        self.execute("echo FEATURES=\\\"-sandbox -usersandbox\\\" " +
-                     ">> /etc/portage/make.conf")
-        self.execute(("echo MAKEOPTS=\\\"-j%d\\\" " %
-                      (options.options.threads)) +
-                     ">> /etc/portage/make.conf")
-        self.execute("echo EMERGE_DEFAULT_OPTS=\\\"--autounmask --autounmask-write --usepkg --oneshot\\\" " +
-                     ">> /etc/portage/make.conf")
-        self.execute("echo CLEAN_DELAY=0 >> /etc/portage/make.conf")
+        self.execute(
+            "echo MAKEOPTS=\\\"-j%d\\\"" % options.options.threads +
+                " >> /etc/portage/make.conf && " +
+            "echo FEATURES=\\\"-sandbox -usersandbox\\\" >> /etc/portage/make.conf && " +
+            "echo EMERGE_DEFAULT_OPTS=\\\"--autounmask --autounmask-write --usepkg --oneshot\\\"" +
+                " >> /etc/portage/make.conf && " +
+            "echo CLEAN_DELAY=0 >> /etc/portage/make.conf"
+        )
+
         if options.options.unstable:
             self.execute("echo ACCEPT_KEYWORDS=\\\"~amd64\\\" " +
                          ">> /etc/portage/make.conf")
@@ -243,34 +241,33 @@ class Docker:
     def _enable_overlays(self, repo_names):
         """Enable overlays."""
 
-        self.execute("mkdir -p /etc/portage/repos.conf")
         for r in repo_names:
-            self.execute("echo \"[%s]\" >> "
-                         "/etc/portage/repos.conf/overlays.conf" % r)
-            self.execute("echo \"location = /var/lib/overlays/%s\" >> "
-                         "/etc/portage/repos.conf/overlays.conf" % r)
-            self.execute("echo \"master = gentoo\" >> "
-                         "/etc/portage/repos.conf/overlays.conf")
+            self.execute(
+                "mkdir -p /etc/portage/repos.conf && " +
+                "echo -e \"[%s]\\n" % str(r) +
+                "location = /var/lib/overlays/%s\\n" % str(r) +
+                "master = gentoo\" >> /etc/portage/repos.conf/overlays.conf"
+            )
 
     def _enable_ccache(self):
         """Enable ccache."""
 
         if options.options.ccache_dir is not None:
             options.log.info("enabling ccache feature")
-            self.execute("mkdir -p /var/cache/ccache /tmp/ccache-tmpfiles")
-            self.execute("chown root:portage /var/cache/ccache /tmp/ccache-tmpfiles")
-            self.execute("chmod 2775 /var/cache/ccache /tmp/ccache-tmpfiles")
             self.execute(
-                "echo -e \"FEATURES=\\\"\${FEATURES} ccache\\\"\n" +
-                "CCACHE_DIR=\\\"/var/cache/ccache\\\"\n" +
-                "CCACHE_MAXSIZE=\\\"30G\\\"\n" +
-                "CCACHE_UMASK=\\\"002\\\"\n" +
-                "CCACHE_NLEVELS=\\\"3\\\"\n" +
-                "CCACHE_COMPILERCHECK=\\\"%compiler% -v\\\"\n" +
-                "CCACHE_COMPRESS=\\\"true\\\"\n" +
-                "CCACHE_COMPRESSLEVEL=\\\"6\\\"\n" +
-                "CCACHE_TEMPDIR=\\\"/tmp/ccache-tmpfiles\\\"\"" +
-                ">> /etc/portage/make.conf")
+	                "mkdir -p /var/cache/ccache /tmp/ccache-tmpfiles && " +
+	                "chown root:portage /var/cache/ccache /tmp/ccache-tmpfiles && " +
+	                "chmod 2775 /var/cache/ccache /tmp/ccache-tmpfiles && " +
+	                "echo -e \"FEATURES=\\\"\${FEATURES} ccache\\\"\\n" +
+	                "CCACHE_DIR=\\\"/var/cache/ccache\\\"\\n" +
+	                "CCACHE_MAXSIZE=\\\"30G\\\"\\n" +
+	                "CCACHE_UMASK=\\\"002\\\"\\n" +
+	                "CCACHE_NLEVELS=\\\"3\\\"\\n" +
+	                "CCACHE_COMPILERCHECK=\\\"%compiler% -v\\\"\\n" +
+	                "CCACHE_COMPRESS=\\\"true\\\"\\n" +
+	                "CCACHE_COMPRESSLEVEL=\\\"6\\\"\\n" +
+	                "CCACHE_TEMPDIR=\\\"/tmp/ccache-tmpfiles\\\"\" >> /etc/portage/make.conf"
+                )
         else:
             options.log.info("enabling ccache skipped, no directory specified")
 
@@ -293,11 +290,14 @@ class Docker:
     def _mask(self):
         """Mask other atoms."""
 
-        options.log.info("masking additional atoms")
-        for a in options.options.mask:
-            options.log.info("  masking %s" % a)
-            self.execute("mkdir -p /etc/portage/package.mask")
-            self.execute("echo \"%s\" >> /etc/portage/package.mask/testbuild" % a)
+        if options.options.mask:
+            options.log.info("masking additional atoms")
+            for a in options.options.mask:
+                options.log.info("  masking %s" % a)
+                self.execute(
+                    "mkdir -p /etc/portage/package.mask && " +
+                    "echo \"%s\" >> /etc/portage/package.mask/testbuild" % str(a)
+                )
 
     def _unmask_atom(self):
         """Unmask the atom to install."""
@@ -309,10 +309,13 @@ class Docker:
                     unmask_keyword = "**"
                 else:
                     unmask_keyword = "~amd64"
-                self.execute("mkdir -p /etc/portage/package.{accept_keywords,unmask}")
-                self.execute("echo \"%s\" >> /etc/portage/package.unmask/testbuild" % a)
-                self.execute("echo \"" + str(a) + "\" " + unmask_keyword + " >> " +
-                    "/etc/portage/package.accept_keywords/testbuild")
+                self.execute(
+                    "mkdir -p /etc/portage/package.{accept_keywords,unmask} && " +
+                    "echo \"%s\" >> /etc/portage/package.unmask/testbuild && " % str(a) +
+                    "echo \"" + str(a) + "\" " + unmask_keyword + " >> " +
+                        "/etc/portage/package.accept_keywords/testbuild"
+                )
+
             if len(options.options.use) > 0:
                 for a in options.options.atom:
                     self.execute("echo %s %s >> /etc/portage/package.use/testbuild" %
@@ -323,12 +326,15 @@ class Docker:
     def _unmask(self):
         """Unmask other atoms."""
 
-        options.log.info("unmasking additional atoms")
-        for a in options.options.unmask:
-            options.log.info("  unmasking %s" % a)
-            self.execute("mkdir -p /etc/portage/package.{accept_keywords,unmask}")
-            self.execute("echo \"%s\" >> /etc/portage/package.unmask/testbuild" % a)
-            self.execute("echo \"%s\" ~amd64 >> /etc/portage/package.accept_keywords/testbuild" % a)
+        if options.options.unmask:
+            options.log.info("unmasking additional atoms")
+            for a in options.options.unmask:
+                options.log.info("  unmasking %s" % a)
+                self.execute(
+                    "mkdir -p /etc/portage/package.{accept_keywords,unmask} && " +
+                    "echo \"%s\" >> /etc/portage/package.unmask/testbuild && " % str(a) +
+                    "echo \"%s\" ~amd64 >> /etc/portage/package.accept_keywords/testbuild" % str(a)
+                )
 
     def _update(self):
         """Update container."""
@@ -345,7 +351,7 @@ class Docker:
         """Install some basic packages."""
 
         if options.options.quick:
-        	return
+            return
 
         options.log.info("installing basic packages: %s" %
                          options.base_packages)
@@ -364,10 +370,8 @@ class Docker:
     def _set_gcc(self):
         """Set gcc in the container."""
 
-        import re
-
-        options.log.info("setting gcc")
         if options.options.gcc_version:
+            options.log.info("setting gcc")
             self.execute("mkdir -p /etc/portage/package.accept_keywords")
             self.execute(
                 ("echo =sys-devel/gcc-%s ** >> " %
@@ -382,6 +386,9 @@ class Docker:
 
     def _print_summary(self):
         """Print summary."""
+
+        if options.options.quick:
+            return
 
         options.log.info("summary")
         self.execute(
