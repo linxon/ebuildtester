@@ -72,9 +72,6 @@ class Docker:
             os.waitid(os.P_PID, stdout_reader, os.WEXITED)
             os.waitid(os.P_PID, stderr_reader, os.WEXITED)
             docker.wait()
-
-            if docker.returncode != 0:
-                raise ExecuteFailure
         except KeyboardInterrupt:
             try:
                 options.log.info("received keyboard interrupt")
@@ -86,12 +83,10 @@ class Docker:
             except OSError:
                 pass
             docker.wait()
-        except ExecuteFailure:
-            options.log.error("failed command: \"%s\"" % (cmd))
-            docker.terminate()
-            self.shell()
-            self.cleanup()
-            sys.exit(1)
+
+        if docker.returncode != 0:
+            options.log.error("running in container %s" % (str(self.cid)))
+            raise ExecuteFailure("failed command: \"%s\"" % (cmd))
 
     def shell(self):
         """Run an interactive shell in container."""
