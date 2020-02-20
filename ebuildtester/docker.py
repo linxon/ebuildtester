@@ -206,7 +206,7 @@ class Docker:
             "echo MAKEOPTS=\\\"-j%d\\\"" % options.options.threads +
                 " >> /etc/portage/make.conf && " +
             "echo FEATURES=\\\"-sandbox -usersandbox\\\" >> /etc/portage/make.conf && " +
-            "echo EMERGE_DEFAULT_OPTS=\\\"--autounmask --autounmask-write --usepkg --oneshot\\\"" +
+            "echo EMERGE_DEFAULT_OPTS=\\\"--autounmask --autounmask-write --autounmask-continue --usepkg --oneshot\\\"" +
                 " >> /etc/portage/make.conf && " +
             "echo CLEAN_DELAY=0 >> /etc/portage/make.conf"
         )
