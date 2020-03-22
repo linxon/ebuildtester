@@ -29,7 +29,7 @@ class Atom(object):
 
     def atomCategory(self):
         """Returns the package category without name"""
-        category = re.sub('^(=|<=|>=|<|>)', '', self._splitPackage()[0])
+        category = re.sub('^.*(=|<|>|~)', '', self._splitPackage()[0])
         if category == 'null':
             raise AtomException(
                 "ATOM has to be of the form [=]SECTION/PACKAGE[-VERSION]")
