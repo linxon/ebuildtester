@@ -194,8 +194,8 @@ class Docker:
 
         options.log.info("tweaking settings")
 
-        self.execute("sed -i -e \"/^#en_US.UTF-8/s/^#//\" /etc/locale.gen && locale-gen")
-        self.execute("eselect locale set en_US.UTF-8")
+        # self.execute("sed -i -e \"/^#en_US.UTF-8/s/^#//\" /etc/locale.gen && locale-gen")
+        # self.execute("eselect locale set en_US.UTF-8")
 
         options.log.info("setting Gentoo profile to %s" % options.options.profile)
         self.execute("eselect profile set %s" % options.options.profile)
